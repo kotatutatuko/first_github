@@ -6,8 +6,12 @@
 
 // トークンの型を表す列挙型
 enum {
-    ND_NUM = 256,  // 整数トークン
-    TK_EOF,        // 入力の終わりを表すトークン 257を割り当て
+    TK_NUM = 256,  // 整数トークン
+    TK_EOF,       // 入力の終わりを表すトークン 257を割り当て
+    TK_EQ,
+    TK_NE,
+    TK_LE,
+    TK_GE
 };
 
 typedef struct {
@@ -24,9 +28,13 @@ typedef struct Node {
 } Node;
 
 Node *expr();
+Node *equality();
+Node *relational();
+Node *add();
 Node *mul();
-Node *term();
 Node *unary();
+Node *term();
+
 
 // 入力プログラム
 char *user_input;
@@ -68,7 +76,39 @@ void tokenize() {
             continue;
         }
 
-        if (*p == '+' || *p == '-' || *p == '*' || *p == '/' || *p == '(' || *p == ')') {
+        if (strncmp(p, "==", 2) == 0) {
+            tokens[i].ty = TK_EQ;
+            tokens[i].input = "==";
+            p += 2;
+            i++;
+            continue;
+        }
+
+        if (strncmp(p, "!=", 2) == 0) {
+            tokens[i].ty = TK_NE;
+            tokens[i].input = "!=";
+            p += 2;
+            i++;
+            continue;
+        }
+
+        if (strncmp(p, "<=", 2) == 0) {
+            tokens[i].ty = TK_LE;
+            tokens[i].input = "<=";
+            p += 2;
+            i++;
+            continue;
+        }
+
+        if (strncmp(p, ">=", 2) == 0) {
+            tokens[i].ty = TK_GE;
+            tokens[i].input = ">=";
+            p += 2;
+            i++;
+            continue;
+        }
+
+        if (*p == '+' || *p == '-' || *p == '*' || *p == '/' || *p == '(' || *p == ')' || *p == '<' || *p == '>') {
             tokens[i].ty = *p;
             tokens[i].input = p;
             i++;
@@ -77,7 +117,7 @@ void tokenize() {
         }
 
         if (isdigit(*p)) {
-            tokens[i].ty = ND_NUM;
+            tokens[i].ty = TK_NUM;
             tokens[i].input = p;
             tokens[i].val = strtol(p, &p, 10);
             i++;
@@ -99,9 +139,28 @@ Node *new_node(int ty, Node *lhs, Node *rhs) {
     return node;
 }
 
+Node *new_nodev(char *ty, Node *lhs, Node *rhs) {
+    Node *node = malloc(sizeof(Node));
+    if (strncmp(ty, "==", 2) == 0) {
+        node->ty = TK_EQ;
+    }
+    else if (strncmp(ty, "!=", 2) == 0) {
+        node->ty = TK_NE;
+    }
+    else if (strncmp(ty, "<=", 2) == 0) {
+        node->ty = TK_LE;
+    }
+    else if (strncmp(ty, ">=", 2) == 0) {
+        node->ty = TK_GE;
+    }
+    node->lhs = lhs;
+    node->rhs = rhs;
+    return node;
+}
+
 Node *new_node_num(int val) {
     Node *node = malloc(sizeof(Node));
-    node->ty = ND_NUM;
+    node->ty = TK_NUM;
     node->val = val;
     return node;
 }
@@ -114,9 +173,34 @@ int consume(int ty) {
     return 1;
 }
 
+int consumev(char *ty) {
+    int tyr;
+    if (strncmp(ty, "==", 2) == 0) {
+        tyr = TK_EQ;
+    }
+    else if (strncmp(ty, "!=", 2) == 0) {
+        tyr = TK_NE;
+    }
+    else if (strncmp(ty, "<=", 2) == 0) {
+        tyr = TK_LE;
+    }
+    else if (strncmp(ty, ">=", 2) == 0) {
+        tyr = TK_GE;
+    }
+    else {
+        return 0;
+    }
+    if (tokens[pos].ty != tyr) {
+        return 0;
+    }
+    pos++;
+    return 1;
+
+}
+
 
 void gen(Node *node) {
-    if (node->ty == ND_NUM) {
+    if (node->ty == TK_NUM) {
         printf("    push %d\n", node->val);
         return;
     }
@@ -140,6 +224,26 @@ void gen(Node *node) {
     case '/':
         printf("    cqo\n");
         printf("    idiv rdi\n");
+        break;
+    case '<':
+        printf("    cmp rax, rdi\n");
+        printf("    setl al\n");
+        printf("    movzb rax, al\n");
+        break;
+    case TK_EQ:
+        printf("    cmp rax, rdi\n");
+        printf("    sete al\n");
+        printf("    movzb rax, al\n");
+        break;
+    case TK_NE:
+        printf("    cmp rax, rdi\n");
+        printf("    setne al\n");
+        printf("    movzb rax, al\n");
+        break;
+    case TK_LE:
+        printf("    cmp rax, rdi\n");
+        printf("    setle al\n");
+        printf("    movzb rax, al\n");
     }
 
     printf("    push rax\n");
@@ -171,21 +275,62 @@ int main(int argc, char **argv){
     return 0;
 }
 
+Node *expr() {
+    return equality();
+}
 
-Node *term() {
-    if (consume('(')) {
-        Node *node = expr();
-        if (!consume(')')){
-            error_at(tokens[pos].input, "開きカッコに対応する閉じカッコがありません");
+Node *equality() {
+    Node *node = relational();
+
+    for (;;) {
+        if (consumev("==")) {
+            node = new_nodev("==", node, relational());
         }
-        return node;
+        else if (consumev("!=")) {
+            node = new_nodev("!=", node, relational());
+        }
+        else {
+            return node;
+        }
     }
+}
 
-    if (tokens[pos].ty == ND_NUM) {
-        return new_node_num(tokens[pos++].val);
+Node *relational() {
+    Node *node = add();
+
+    for (;;) {
+        if (consume('<')) {
+            node = new_node('<', node, add());
+        }
+        else if (consumev("<=")) {
+            node = new_nodev("<=", node, add());
+        }
+        else if (consume('>')) {
+            node = new_node('<', add(), node);
+        }
+        else if (consumev(">=")) {
+            node = new_nodev("<=", add(), node);
+        }
+        else {
+            return node;
+        }
     }
+}
 
-    error_at(tokens[pos].input, "数値でも開きカッコでもないトークンです");
+Node *add() {
+    Node *node = mul();
+
+    for (;;) {
+        if (consume('+')){
+            node = new_node('+', node, mul());
+        }
+        else if (consume('-')){
+            node = new_node('-', node, mul());
+        }
+        else {
+            return node;
+        }
+    }
 }
 
 Node *mul() {
@@ -204,22 +349,6 @@ Node *mul() {
     }
 }
 
-Node *expr() {
-    Node *node = mul();
-
-    for (;;) {
-        if (consume('+')){
-            node = new_node('+', node, mul());
-        }
-        else if (consume('-')){
-            node = new_node('-', node, mul());
-        }
-        else {
-            return node;
-        }
-    }
-}
-
 Node *unary() {
     if (consume('+')) {
         return term();
@@ -228,4 +357,20 @@ Node *unary() {
         return new_node('-', new_node_num(0), term());
     }
     return term();
+}
+
+Node *term() {
+    if (consume('(')) {
+        Node *node = expr();
+        if (!consume(')')){
+            error_at(tokens[pos].input, "開きカッコに対応する閉じカッコがありません");
+        }
+        return node;
+    }
+
+    if (tokens[pos].ty == TK_NUM) {
+        return new_node_num(tokens[pos++].val);
+    }
+
+    error_at(tokens[pos].input, "数値でも開きカッコでもないトークンです");
 }
